@@ -1,0 +1,9 @@
+<launch>
+  <node pkg="turtlesim" exec="turtlesim_node" name="turtlesim"/>
+  
+  <node pkg="turtle_controller" exec="moving_turtle" name="moving_turtle"/>
+  
+  <node pkg="turtle_controller" exec="color_changer" name="color_changer"/>
+  
+  <node pkg="turtle_controller" exec="hmi" name="hmi"/>
+</launch>

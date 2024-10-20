@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="lane_id" default="'1'" />
+  <arg name="time_limit" default="50.0"/>
+  <arg name="speed_limit" default="100.0"/>
+  <arg name="lane_departure" default="1.5"/>
+  <arg name="goal_x" default="110.197764"/>
+  <arg name="goal_y" default="442.855597"/>
+  
+  <node pkg="evaluation" exec="evaluation" name="evaluation" output="screen">
+    <param name="evaluation/lane_id" value="$(var lane_id)"/>
+    <param name="evaluation/time_limit" value="$(var time_limit)"/>
+    <param name="evaluation/speed_limit" value="$(var speed_limit)"/>
+    <param name="evaluation/lane_departure" value="$(var lane_departure)"/>
+    <param name="evaluation/goal_x" value="$(var goal_x)"/>
+    <param name="evaluation/goal_y" value="$(var goal_y)"/>
+  </node>
+</launch>

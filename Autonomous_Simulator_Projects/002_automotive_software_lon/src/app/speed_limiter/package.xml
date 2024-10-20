@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>speed_limiter</name>
+  <version>0.0.0</version>
+  <description>The speed limit package for Automotive Software:Longitudinal control</description>
+
+  <maintainer email="sjeong99@hanyang.ac.kr">Seongjae Jeong</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>ad_msgs</depend>
+  <depend>rviz_2d_overlay_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

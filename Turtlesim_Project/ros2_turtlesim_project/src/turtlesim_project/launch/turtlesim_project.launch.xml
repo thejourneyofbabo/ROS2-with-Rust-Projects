@@ -1,0 +1,7 @@
+<launch>
+  <node pkg="turtlesim" exec="turtlesim_node" name="turtlesim"/>
+  <node pkg="turtlesim_project" exec="moving_turtle" name="moving_turtle"/>
+  <node pkg="turtlesim_project" exec="color_changer" name="color_changer"/>
+  <node pkg="turtlesim_project" exec="hmi" name="hmi"/>
+  <node pkg="rviz2" exec="rviz2" name="rviz2"/>
+</launch>

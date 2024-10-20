@@ -1,0 +1,54 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="use_manual_inputs" default="false" />
+
+  <arg name="ns1" default="ego"/>
+
+  <arg name="ROIFront" default="20.0"/>
+  <arg name="ROIRear" default="5.0"/>
+  <arg name="ROILeft" default="4.0"/>
+  <arg name="ROIRight" default="4.0"/>
+
+  <arg name="pure_pursuit_kd" default="5.0"/>
+  <arg name="pure_pursuit_kv" default="0.35"/>
+  <arg name="pure_pursuit_kc" default="0.0"/>
+  <arg name="pid_kp" default="5.0"/>
+  <arg name="pid_ki" default="0.002"/>
+  <arg name="pid_kd" default="0.0"/>
+  <arg name="brake_ratio" default="1.2"/>
+
+  <group>
+    <node pkg="simulator" exec="vehicle" name="vehicle" namespace="$(var ns1)" output="screen">
+      <param name="vehicle/ns" value="$(var ns1)"/>
+      <param name="vehicle/init_x" value="0.0" />
+      <param name="vehicle/init_y" value="0.0" />
+      <param name="vehicle/init_yaw" value="0.0" />
+      <param name="vehicle/init_vel" value="0.0" />
+    </node>
+    
+    <node pkg="simulator" exec="lane_detection" name="lane_detection" namespace="$(var ns1)" output="screen">
+      <param name="lane_detection/ns" value="$(var ns1)"/>
+      <param name="lane_detection/ROIFront" value="$(var ROIFront)"/>
+      <param name="lane_detection/ROIRear" value="$(var ROIRear)"/>
+      <param name="lane_detection/ROILeft" value="$(var ROILeft)"/>
+      <param name="lane_detection/ROIRight" value="$(var ROIRight)"/>
+    </node>
+
+    <node pkg="autonomous_driving" exec="autonomous_driving" name="autonomous_driving" namespace="$(var ns1)" output="screen">
+      <param name="autonomous_driving/ns" value="$(var ns1)"/>
+      <param name="autonomous_driving/use_manual_inputs" value="$(var use_manual_inputs)"/>
+      <param name="autonomous_driving/pure_pursuit_kd" value="$(var pure_pursuit_kd)"/>
+      <param name="autonomous_driving/pure_pursuit_kv" value="$(var pure_pursuit_kv)"/>
+      <param name="autonomous_driving/pure_pursuit_kc" value="$(var pure_pursuit_kc)"/>
+      <param name="autonomous_driving/pid_kp" value="$(var pid_kp)"/>
+      <param name="autonomous_driving/pid_ki" value="$(var pid_ki)"/>
+      <param name="autonomous_driving/pid_kd" value="$(var pid_kd)"/>
+      <param name="autonomous_driving/brake_ratio" value="$(var brake_ratio)"/>
+    </node>
+
+    <node pkg="simulator" exec="display" name="display" namespace="$(var ns1)" output="screen">
+      <param name="display/ns" value="$(var ns1)"/>
+    </node>
+  </group>
+  <node pkg="rviz2" exec="rviz2" name="rviz2" args="-d $(find-pkg-share simulator)/../../../../resources/rviz/ros2_practice.rviz"/>
+</launch>

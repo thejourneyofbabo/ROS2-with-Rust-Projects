@@ -1,0 +1,169 @@
+/**
+ * @copyright Hanyang University, Department of Automotive Engineering, 2024. All rights reserved. 
+ *            Subject to limited distribution and restricted disclosure only.
+ * 
+ * @file      autonomous_driving.hpp
+ * @brief     autonomous driving algorithm 
+ * 
+ * @date      2018-11-20 created by Kichun Jo (kichunjo@hanyang.ac.kr)
+ *            2023-08-07 updated by Yuseung Na (yuseungna@hanyang.ac.kr)
+ *              : adapt new template
+ *            2023-08-20 updated by Yuseung Na (yuseungna@hanyang.ac.kr)
+ *              : change to ROS2
+ */
+
+#ifndef __AUTONOMOUS_DRIVING_HPP__
+#define __AUTONOMOUS_DRIVING_HPP__
+#pragma once
+
+// STD Header
+#include <memory>
+#include <mutex>
+#include <utility>
+#include <vector>
+#include <string>
+#include <cmath>
+#include <chrono>
+
+// ROS Header
+#include <rclcpp/rclcpp.hpp>
+#include <rclcpp/message_info.hpp>
+
+// ROS Message Header
+#include <ad_msgs/msg/polyfit_lane_data.hpp>
+#include <ad_msgs/msg/lane_point_data.hpp>
+#include <ad_msgs/msg/lane_point_data_array.hpp>
+#include <ad_msgs/msg/vehicle_input.hpp>
+#include <ad_msgs/msg/vehicle_output.hpp>
+#include <std_msgs/msg/float32.hpp>
+
+// Algorithm Header
+
+// Parameter Header
+
+// 새로 추가된 PIDController 클래스 정의
+class PIDController {
+public:
+    PIDController(double kp, double ki, double kd) : kp_(kp), ki_(ki), kd_(kd) {}
+
+    double calculate(double error, double dt) {
+        integral_ += error * dt;
+        double derivative = (error - prev_error_) / dt;
+        double output = kp_ * error + ki_ * integral_ + kd_ * derivative;
+        prev_error_ = error;
+        return output;
+    }
+
+    void reset() {
+        integral_ = 0.0;
+        prev_error_ = 0.0;
+    }
+
+private:
+    double kp_, ki_, kd_;
+    double integral_ = 0.0;
+    double prev_error_ = 0.0;
+};
+
+class AutonomousDriving : public rclcpp::Node {
+    public:
+        AutonomousDriving(const std::string& node_name, const double& loop_rate,
+                          const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
+        ~AutonomousDriving();
+
+        void Init(const rclcpp::Time& current_time);
+        void Run(const rclcpp::Time& current_time);
+        void Publish(const rclcpp::Time& current_time);
+        void UpdateParameter();
+
+    private:
+        // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - //
+        // Functions     
+        
+        // Callback functions   
+        inline void CallbackManualInput(const ad_msgs::msg::VehicleInput::SharedPtr msg) {            
+            mutex_manual_input_.lock();
+            if(param_use_manual_inputs_ == true) {
+                o_vehicle_command_.accel = msg->accel;
+                o_vehicle_command_.brake = msg->brake;
+                o_vehicle_command_.steering = msg->steering;
+            }
+            mutex_manual_input_.unlock();
+        }
+        inline void CallbackVehicleState(const ad_msgs::msg::VehicleOutput::SharedPtr msg) {            
+            mutex_vehicle_state_.lock();
+            i_vehicle_state_ = *msg;
+            mutex_vehicle_state_.unlock();
+        }
+        inline void CallbackLimitSpeed(const std_msgs::msg::Float32::SharedPtr msg) {            
+            mutex_limit_speed_.lock();
+            i_limit_speed_ = msg->data;
+            mutex_limit_speed_.unlock();
+        }
+        inline void CallbackLanePoints(const ad_msgs::msg::LanePointData::SharedPtr msg) {            
+            mutex_lane_points_.lock();
+            i_lane_points_ = *msg;
+            mutex_lane_points_.unlock();
+        }
+        
+        // Algorithm functions
+
+        
+        // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - //
+        // Variables
+
+        // Publisher
+        rclcpp::Publisher<ad_msgs::msg::VehicleInput>::SharedPtr p_vehicle_command_;
+        rclcpp::Publisher<ad_msgs::msg::PolyfitLaneData>::SharedPtr p_driving_way_;
+
+        // Subscriber
+        rclcpp::Subscription<ad_msgs::msg::VehicleInput>::SharedPtr s_manual_input_;
+        rclcpp::Subscription<ad_msgs::msg::VehicleOutput>::SharedPtr s_vehicle_state_;
+        rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr s_limit_speed_;
+        rclcpp::Subscription<ad_msgs::msg::LanePointData>::SharedPtr s_lane_points_;
+
+        // Timer
+        rclcpp::TimerBase::SharedPtr t_run_node_;
+        
+        // Inputs
+        ad_msgs::msg::VehicleOutput i_vehicle_state_;
+        double i_limit_speed_ = 0.0;
+        ad_msgs::msg::LanePointData i_lane_points_;
+
+        // Mutex
+        std::mutex mutex_manual_input_;
+        std::mutex mutex_vehicle_state_;
+        std::mutex mutex_limit_speed_;
+        std::mutex mutex_lane_points_;        
+
+        // Outputs
+        ad_msgs::msg::VehicleInput o_vehicle_command_;
+        ad_msgs::msg::PolyfitLaneData o_driving_way_;
+
+        // Configuration parameters        
+        std::string param_vehicle_namespace_;
+        bool param_use_manual_inputs_ = false;
+        const double param_wheel_base_ = 1.302 + 1.398; // L_f + L_r
+        const double param_max_lateral_accel_ = 6200.0 / 1319.91; // Fyf_max / Mass
+
+        // Tuning parameters
+        double param_pp_kd_ = 1.0;
+        double param_pp_kv_ = 0.0;
+        double param_pp_kc_ = 0.0;
+        double param_pid_kp_ = 0.0;
+        double param_pid_ki_ = 0.0;
+        double param_pid_kd_ = 0.0;
+        double param_brake_ratio_ = 1.0;
+
+        // Algorhtm variables
+        double speed_error_integral_ = 0.0;
+        double speed_error_prev_     = 0.0;
+
+        // 새로 추가된 PID 제어기 관련 변수
+        PIDController speed_pid_;
+        std::vector<float> target_speeds_;
+        size_t current_target_index_;
+        rclcpp::Time last_time_;
+};
+
+#endif // __AUTONOMOUS_DRIVING_HPP__
