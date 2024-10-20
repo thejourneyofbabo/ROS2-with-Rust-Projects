@@ -13,15 +13,18 @@
  */
 
 #include "autonomous_driving.hpp"
+#include <std_msgs/msg/float64.hpp>
 
 AutonomousDriving::AutonomousDriving(const std::string &node_name, const double &loop_rate,
                                      const rclcpp::NodeOptions &options)
     : Node(node_name, options),
-      // 새로운 초기화 리스트 항목
-      speed_pid_(0.0, 0.0, 0.0),  // PID 게인은 UpdateParameter에서 설정됩니다.
+      // START REUSABLE SECTION
       target_speeds_{30, 60, 90, 70, 50, 30, 100, 50, 100},
-      current_target_index_(0) {
-
+      current_speed_index_(0),
+      last_speed_change_time_(this->now()),
+      pid_last_time(this->now())
+      // END REUSABLE SECTION
+{
     RCLCPP_WARN(this->get_logger(), "Initialize node...");
 
     // QoS init
@@ -113,6 +116,10 @@ AutonomousDriving::AutonomousDriving(const std::string &node_name, const double 
         "vehicle_command", qos_profile);
     p_driving_way_ = this->create_publisher<ad_msgs::msg::PolyfitLaneData>(
         "driving_way", qos_profile);
+    // START REUSABLE SECTION
+    p_limit_speed_data_ = this->create_publisher<std_msgs::msg::Float64>("limit_speed_data", 10);
+    p_ego_velocity_ = this->create_publisher<std_msgs::msg::Float64>("ego/vehicle_state/velocity", 10);
+    // END REUSABLE SECTION
 
     // Initialize
     Init(this->now());
@@ -122,14 +129,12 @@ AutonomousDriving::AutonomousDriving(const std::string &node_name, const double 
         std::chrono::milliseconds((int64_t)(1000 / loop_rate)),
         [this]()
         { this->Run(this->now()); });
-
-    // 새로운 코드: last_time_ 초기화
-    last_time_ = this->now();
 }
 
 AutonomousDriving::~AutonomousDriving() {}
 
 void AutonomousDriving::Init(const rclcpp::Time &current_time) {
+    // You can remove this function if it's not used
 }
 
 void AutonomousDriving::UpdateParameter() {
@@ -140,85 +145,128 @@ void AutonomousDriving::UpdateParameter() {
     this->get_parameter("autonomous_driving/pid_ki", param_pid_ki_);
     this->get_parameter("autonomous_driving/pid_kd", param_pid_kd_);
     this->get_parameter("autonomous_driving/brake_ratio", param_brake_ratio_);
-
-    // 새로운 코드: PID 게인 업데이트
-    speed_pid_ = PIDController(param_pid_kp_, param_pid_ki_, param_pid_kd_);
 }
 
 void AutonomousDriving::Run(const rclcpp::Time &current_time) {
     UpdateParameter();
 
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - //
     // Get subscribe variables
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - //
     mutex_vehicle_state_.lock();
     ad_msgs::msg::VehicleOutput vehicle_state = i_vehicle_state_;
     mutex_vehicle_state_.unlock();
 
     mutex_limit_speed_.lock();
-    double limit_speed = i_limit_speed_;
+    double target_speed = i_limit_speed_;
     mutex_limit_speed_.unlock();
 
     mutex_lane_points_.lock();
     ad_msgs::msg::LanePointData lane_points = i_lane_points_;
     mutex_lane_points_.unlock();
 
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - //
     // Algorithm
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - //
-    
-    // output variables
     ad_msgs::msg::VehicleInput vehicle_command;
     ad_msgs::msg::PolyfitLaneData driving_way;
-    
-    if (param_use_manual_inputs_ == false) {
-        // 새로운 코드: PID 제어를 사용한 속도 제어
-        double current_speed = vehicle_state.velocity;
-        double target_speed = target_speeds_[current_target_index_];
 
-        // 시간 간격 계산
-        double dt = (current_time - last_time_).seconds();
-        last_time_ = current_time;
+    if (!param_use_manual_inputs_) {
+        // START REUSABLE SECTION
+        PID(current_time, target_speed, vehicle_state.velocity);
 
-        // PID 제어기를 사용한 속도 제어
-        double error = target_speed - current_speed;
-        double control_output = speed_pid_.calculate(error, dt);
-
-        // 제어 출력을 가속/제동 명령으로 변환
-        if (control_output > 0) {
-            vehicle_command.accel = std::min(control_output, 100.0);
-            vehicle_command.brake = 0;
+        if (computed_input >= 0.0) {
+            vehicle_command.accel = computed_input;
+            vehicle_command.brake = 0.0;
         } else {
-            vehicle_command.accel = 0;
-            vehicle_command.brake = std::min(-control_output * param_brake_ratio_, 100.0);
+            vehicle_command.accel = 0.0;
+            vehicle_command.brake = -computed_input;
         }
 
-        // 목표 속도 변경 로직
-        if (std::abs(error) < 0.5) {
-            current_target_index_ = (current_target_index_ + 1) % target_speeds_.size();
-            RCLCPP_INFO(this->get_logger(), "Reached target speed. Moving to next target: %f", target_speeds_[current_target_index_]);
-        }
+        // Publish target speed
+        auto target_speed_msg = std_msgs::msg::Float64();
+        target_speed_msg.data = target_speed;
+        p_limit_speed_data_->publish(target_speed_msg);
 
-        RCLCPP_INFO(this->get_logger(), "Current Speed: %f, Target Speed: %f", current_speed, target_speed);
-        RCLCPP_INFO(this->get_logger(), "Command - Accel: %f, Brake: %f", 
-              vehicle_command.accel, vehicle_command.brake);
+        // Publish current vehicle speed
+        auto current_speed_msg = std_msgs::msg::Float64();
+        current_speed_msg.data = vehicle_state.velocity;
+        p_ego_velocity_->publish(current_speed_msg);
+
+        RCLCPP_INFO(this->get_logger(), "Target speed index: %zu, Target speed: %f, Current speed: %f", 
+                    current_speed_index_, target_speed, vehicle_state.velocity);
+        // END REUSABLE SECTION
     }
 
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - //
     // Update output
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - //
     o_driving_way_ = driving_way;
     o_vehicle_command_ = vehicle_command;
 
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - //
     // Publish output
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - //
     Publish(current_time);
 }
 
 void AutonomousDriving::Publish(const rclcpp::Time &current_time) {
     p_vehicle_command_->publish(o_vehicle_command_);
     p_driving_way_->publish(o_driving_way_);
+}
+
+// START REUSABLE SECTION
+void AutonomousDriving::PID(const rclcpp::Time& current_time, double target_value, double current_value) {
+    double dt = (current_time - pid_last_time).seconds();
+
+    if (dt <= 0.0) {
+        dt = 0.01;
+    }
+
+    e = target_value - current_value;
+
+    int_e += (dt * (e + e_prev) / 2.0);
+
+    double dev_e = (e - e_prev) / dt;
+
+    computed_input = param_pid_kp_ * e + param_pid_ki_ * int_e + param_pid_kd_ * dev_e;
+
+    e_prev = e;
+    pid_last_time = current_time;
+}
+// END REUSABLE SECTION
+
+void AutonomousDriving::CallbackManualInput(const ad_msgs::msg::VehicleInput::SharedPtr msg) {            
+    mutex_manual_input_.lock();
+    if(param_use_manual_inputs_ == true) {
+        o_vehicle_command_.accel = msg->accel;
+        o_vehicle_command_.brake = msg->brake;
+        o_vehicle_command_.steering = msg->steering;
+    }
+    mutex_manual_input_.unlock();
+}
+
+void AutonomousDriving::CallbackVehicleState(const ad_msgs::msg::VehicleOutput::SharedPtr msg) {            
+    mutex_vehicle_state_.lock();
+    i_vehicle_state_ = *msg;
+    mutex_vehicle_state_.unlock();
+}
+
+void AutonomousDriving::CallbackLimitSpeed(const std_msgs::msg::Float32::SharedPtr msg) {            
+    mutex_limit_speed_.lock();
+    
+    // START REUSABLE SECTION
+    // Update target speed sequence
+    if ((this->now() - last_speed_change_time_).seconds() >= 10.0) {  // Change speed every 10 seconds
+        current_speed_index_ = (current_speed_index_ + 1) % target_speeds_.size();
+        last_speed_change_time_ = this->now();
+        i_limit_speed_ = target_speeds_[current_speed_index_];
+        RCLCPP_INFO(this->get_logger(), "Changing target speed to: %f", i_limit_speed_);
+    } else {
+        // Use the received limit speed only if we're not changing to the next target speed
+        i_limit_speed_ = msg->data;
+    }
+    // END REUSABLE SECTION
+    
+    mutex_limit_speed_.unlock();
+}
+
+void AutonomousDriving::CallbackLanePoints(const ad_msgs::msg::LanePointData::SharedPtr msg) {            
+    mutex_lane_points_.lock();
+    i_lane_points_ = *msg;
+    mutex_lane_points_.unlock();
 }
 
 int main(int argc, char **argv) {
